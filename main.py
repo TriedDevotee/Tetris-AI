@@ -1,6 +1,7 @@
 import random
 import tkinter as tk
 import pygame as pg
+import math
 
 import pieces
 
@@ -178,7 +179,28 @@ def update_curr_piece():
 
                 POST_LAND_TIMER = -1
 
+def get_all_rotations():
+    rotations = []
+
+    rotations.append([current_piece["cells"]])
+
+    for _ in range(3):
+        rotations.append([(-y, x) for x, y in rotations[-1]])
     
+    return rotations
+
+def get_lowest_point():
+
+
+def find_best_move(cells, BOARD_WIDTH):
+    best_score = -math.inf
+    best_move = None
+
+    for rotation in get_all_rotations(cells):
+        for x_pos in range(BOARD_WIDTH):
+            y = get_lowest_point()
+
+
 
 def draw_cell(start_x, start_y, color):
     px = start_x * CELL_SIZE
