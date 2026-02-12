@@ -1,3 +1,4 @@
+import copy
 import random
 import tkinter as tk
 import pygame as pg
@@ -13,11 +14,14 @@ BOARD_HEIGHT = 22
 
 FRAME_TIMER = 0
 DAS_TIMER = 0
-POST_LAND_TIMER = 0
+POST_LAND_TIMER = -1
 
 PIECES_FALLING = False
 
 CELL_SIZE = 30
+
+DO_BASE_PIECES = True
+AI_INSTANT_PLACE = True
 
 BOARD = [[0 for i in range(BOARD_WIDTH)] for j in range(BOARD_HEIGHT)]
 
@@ -111,12 +115,16 @@ def move_piece():
 def fill_bag():
     global tetromino_bag
 
-    pieces_to_pick = ["SQUARE", "LINE", "T_BLOCK", "LEFT_SQUIGGLY", "RIGHT_SQUIGGLY", "LEFT_L", "RIGHT_L"]
+    pieces_to_pick = list(pieces.pieces.keys())
+
+    if DO_BASE_PIECES:
+        pieces_to_pick = pieces_to_pick[0:7]
+
     random.shuffle(pieces_to_pick)
 
     tetromino_bag = pieces_to_pick
 
-def detect_for_lines():
+def detect_for_lines(board=BOARD):
     lines_to_kill = []
 
     for y in range(BOARD_HEIGHT - 1, -1, -1):
@@ -124,7 +132,7 @@ def detect_for_lines():
         zero_count = 0
 
         for x in range(BOARD_WIDTH):
-            if BOARD[y][x] == 0:
+            if board[y][x] == 0:
                 zero_count += 1
 
         if zero_count == 0:
@@ -151,8 +159,10 @@ def add_new_piece():
 
     piece_index = tetromino_bag.pop()
 
-    current_piece["cells"] = pieces.pieces[piece_index][:4]
-    current_piece["color"] = pieces.pieces[piece_index][4]
+    piece_data = pieces.pieces[piece_index]
+
+    current_piece["cells"] = piece_data[:-1]
+    current_piece["color"] = piece_data[-1]
     current_piece["x"] = 3
     current_piece["y"] = 0
 
@@ -173,32 +183,121 @@ def update_curr_piece():
         if POST_LAND_TIMER == -1:
             POST_LAND_TIMER = 20
         else:
-            if POST_LAND_TIMER == 0:
+            if POST_LAND_TIMER <= 0:
                 lock_piece()
                 curr_falling = False
 
                 POST_LAND_TIMER = -1
 
-def get_all_rotations():
+def get_all_rotations(cells=current_piece["cells"]):
     rotations = []
+    current = cells
 
-    rotations.append([current_piece["cells"]])
-
-    for _ in range(3):
-        rotations.append([(-y, x) for x, y in rotations[-1]])
+    for _ in range(4):
+        current = normalize(current)
+        if current not in rotations:
+            rotations.append(current)
+        current = ([(-y, x) for x, y in current])
     
     return rotations
 
-def get_lowest_point():
+def get_lowest_point(x, cells):
+    y=0
+    while not piece_collides(x, y + 1,cells=cells):
+        y += 1
+    return y
 
+def simulate_board(cells, x, y, color):
+    new_board = copy.deepcopy(BOARD)
 
-def find_best_move(cells, BOARD_WIDTH):
+    for px, py in cells:
+        if y + py >= 0:
+            new_board[y+py][x+px] = color
+    
+    return new_board
+
+def get_column_heights(board):
+    heights = []
+    for x in range(BOARD_WIDTH):
+        min_height = 0
+        for y in range(BOARD_HEIGHT):
+            if board[y][x] != 0:
+                min_height = BOARD_HEIGHT - y
+                break
+        heights.append(min_height)
+    
+    return heights
+
+def count_holes(board):
+    count = 0
+
+    for x in range(BOARD_WIDTH):
+        block_found = False
+
+        for y in range(BOARD_HEIGHT):
+            if board[y][x] != 0:
+                block_found = True
+            elif block_found:
+                count += 1
+
+    return count
+        
+
+def evaluate(board):
+    heights = get_column_heights(board)
+    holes = count_holes(board)
+    bumpiness = sum(abs(heights[i] - heights[i+1]) for i in range (BOARD_WIDTH - 1))
+    lines = detect_for_lines(board)
+
+    if DO_BASE_PIECES:
+        height_weight = -0.510066
+        hole_weight = -0.35663
+        bumpiness_weight =  -0.184483
+        lines_weight = +0.760666
+
+    else:
+        height_weight = -0.95
+        hole_weight = -0.95
+        bumpiness_weight = -0.40
+        lines_weight = +1.5
+
+    return (
+        height_weight * sum(heights) +
+        hole_weight * holes + 
+        bumpiness_weight * bumpiness + 
+        lines_weight * len(lines)
+    )
+
+def find_best_move(cells):
     best_score = -math.inf
     best_move = None
+    best_xpos = 0
 
     for rotation in get_all_rotations(cells):
         for x_pos in range(BOARD_WIDTH):
-            y = get_lowest_point()
+
+            if piece_collides(x_pos, 0, rotation):
+                continue
+
+            y_pos = get_lowest_point(x_pos, rotation)
+            new_board = simulate_board(
+                rotation, 
+                x_pos, 
+                y_pos, 
+                current_piece["color"])
+            
+            score = evaluate(new_board)
+
+            if score > best_score:
+                best_score = score
+                best_move = (rotation, x_pos)
+
+                best_xpos = x_pos
+
+    print(f"Best move = {best_move} at position {best_xpos} with a score of {best_score}")
+
+    return best_move
+
 
 
 
@@ -229,6 +328,13 @@ def draw_pieces():
                 current_piece["color"]
             )
 
+def run_AI_game_loop():
+    (rotation, x) = find_best_move(current_piece["cells"])
+
+    current_piece["x"] = x
+    current_piece["cells"] = rotation
+
+
     
 
 def game_loop():
@@ -236,17 +342,18 @@ def game_loop():
 
     canvas.delete("all")
 
-    if (FRAME_TIMER % 10 == 0):
+    if (FRAME_TIMER % 1 == 0):
         if not curr_falling:
             add_new_piece()
+            run_AI_game_loop()
             curr_falling = True
         else:
             update_curr_piece()
 
         kill_lines()
         
-    if (FRAME_TIMER % 2 == 0):
-        move_piece()
+    #if (FRAME_TIMER % 2 == 0):
+        #move_piece()
 
     draw_pieces()
 
@@ -255,7 +362,7 @@ def game_loop():
     if POST_LAND_TIMER != 0:
         POST_LAND_TIMER -= 1
 
-    root.after(20, game_loop)
+    root.after(10, game_loop)
 
 
 root = tk.Tk()
